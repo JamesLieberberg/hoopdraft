@@ -625,6 +625,18 @@ function checkAnswer(userInput, correct, factKey) {
       if (u === base) return true;
       const resolved = resolveCollegeAlias(u);
       if (resolved === c || resolved === base) return true;
+      // High-school detection: if the player went to a HS/Academy (no college),
+      // accept generic answers like "HS", "high school", "prep"
+      const lowerCorrect = String(correct).toLowerCase();
+      const wentToHS =
+        lowerCorrect.includes(" hs") ||
+        lowerCorrect.endsWith(" hs") ||
+        lowerCorrect.includes("high school") ||
+        lowerCorrect.includes("academy");
+      if (wentToHS) {
+        const hsAliases = ["hs", "highschool", "highsch", "prep", "prepschool", "school"];
+        if (hsAliases.includes(u)) return true;
+      }
       return false;
     }
   }

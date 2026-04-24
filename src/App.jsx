@@ -365,14 +365,17 @@ const PLAYERS = [
   { name: "Tyreke Evans", pick: 4, team: "Sacramento Kings", year: 2009, college: "Memphis", tier: "medium" },
 ];
 
-// Fact order: pick, team, origin (main 3), then year as a bonus round
+// Fact order: pick, team, origin (main 3 = 20 each), then year as a bonus round (+10)
+// Getting all 4 right earns a +30 "perfect round" bonus
 // `origin` dynamically asks for college (US players) or country (international)
 const FACTS = [
-  { key: "pick", label: "Pick Number", points: 15, bonus: false },
-  { key: "team", label: "First NBA Team", points: 15, bonus: false },
+  { key: "pick", label: "Pick Number", points: 20, bonus: false },
+  { key: "team", label: "First NBA Team", points: 20, bonus: false },
   { key: "origin", label: "College / Country", points: 20, bonus: false },
   { key: "year", label: "Draft Year", points: 10, bonus: true },
 ];
+
+const PERFECT_ROUND_BONUS = 30;
 
 function normalize(str) {
   return String(str).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -691,8 +694,8 @@ function InstructionsModal({ onStart, highScores }) {
               The Questions
             </div>
             <ul className="text-sm space-y-1.5 leading-relaxed">
-              <li>1. <span className="font-semibold">Pick Number</span> — where they were drafted (+15)</li>
-              <li>2. <span className="font-semibold">First NBA Team</span> — includes draft-night trades (+15)</li>
+              <li>1. <span className="font-semibold">Pick Number</span> — where they were drafted (+20)</li>
+              <li>2. <span className="font-semibold">First NBA Team</span> — includes draft-night trades (+20)</li>
               <li>3. <span className="font-semibold">College or Country</span> — US players = college, international = country (+20)</li>
               <li>4. <span className="font-semibold">Draft Year</span> — bonus round, no streak penalty (+10)</li>
             </ul>
@@ -700,12 +703,22 @@ function InstructionsModal({ onStart, highScores }) {
 
           <div>
             <div className="bebas text-xl mb-1" style={{ color: "#ff6b00" }}>
-              Streak Bonus
+              Perfect Round Bonus
             </div>
             <p className="text-sm leading-relaxed">
-              Get <span className="font-bold text-white">3 in a row correct</span> to earn a{" "}
-              <span className="font-bold" style={{ color: "#ff6b00" }}>+20 bonus</span>. Bonus rounds
-              don't break your streak if you miss.
+              Get <span className="font-bold text-white">all 4 questions right</span> on a single player to earn a{" "}
+              <span className="font-bold" style={{ color: "#ff6b00" }}>+30 bonus</span>. That's 100 points per player —
+              a perfect game = <span className="font-bold text-white">1000</span>.
+            </p>
+          </div>
+
+          <div>
+            <div className="bebas text-xl mb-1" style={{ color: "#ff6b00" }}>
+              Streak
+            </div>
+            <p className="text-sm leading-relaxed">
+              Keep correct answers in a row to build your streak. No point bonus, but
+              see how long you can go without a miss. The bonus round (year) doesn't break your streak.
             </p>
           </div>
 
@@ -791,15 +804,17 @@ export default function App() {
   const [showInstructions, setShowInstructions] = useState(true); // show on first load
   const [highScores, setHighScores] = useState({ easy: 0, medium: 0, hard: 0 });
   const [isNewHighScore, setIsNewHighScore] = useState(false);
+  const [perfectRoundEarned, setPerfectRoundEarned] = useState(false);
 
   const player = playerIndex !== null ? PLAYERS[playerIndex] : null;
   const currentFact = FACTS[factIndex];
   const isBonusQuestion = currentFact?.bonus;
 
   // Load high scores from localStorage on mount
+  // Note: using v2 key to wipe scores from the old scoring system (+20 streak bonus era)
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("hoopdraft_highscores");
+      const saved = localStorage.getItem("hoopdraft_highscores_v2");
       if (saved) setHighScores(JSON.parse(saved));
     } catch (e) {
       // localStorage unavailable or parse error — ignore
@@ -809,7 +824,7 @@ export default function App() {
   // Save high scores whenever they change
   useEffect(() => {
     try {
-      localStorage.setItem("hoopdraft_highscores", JSON.stringify(highScores));
+      localStorage.setItem("hoopdraft_highscores_v2", JSON.stringify(highScores));
     } catch (e) {
       // ignore
     }
@@ -838,6 +853,7 @@ export default function App() {
     setRoundResults([]);
     setShowRoundSummary(false);
     setAttempted(false);
+    setPerfectRoundEarned(false);
   };
 
   useEffect(() => {
@@ -860,11 +876,9 @@ export default function App() {
 
     if (isCorrect) {
       pointsEarned = currentFact.points;
+      // Streak still tracked (non-bonus questions) but no per-question streak point bonus
       if (!isBonusQuestion) {
         newStreak = streak + 1;
-        if (newStreak > 0 && newStreak % 3 === 0) {
-          pointsEarned += 20;
-        }
         setStreak(newStreak);
         setBestStreak((b) => Math.max(b, newStreak));
       }
@@ -892,7 +906,6 @@ export default function App() {
       correct: isCorrect,
       answer: correctValue,
       pointsEarned,
-      streakBonus: isCorrect && !isBonusQuestion && newStreak > 0 && newStreak % 3 === 0,
       streakBroken,
       isBonus: isBonusQuestion,
     });
@@ -905,6 +918,14 @@ export default function App() {
       setFeedback(null);
       setAttempted(false);
     } else {
+      // End of round — check if all 4 questions were correct = perfect round bonus
+      const allCorrect = roundResults.length === FACTS.length && roundResults.every((r) => r.correct);
+      if (allCorrect) {
+        setScore((s) => s + PERFECT_ROUND_BONUS);
+        setPerfectRoundEarned(true);
+      } else {
+        setPerfectRoundEarned(false);
+      }
       setShowRoundSummary(true);
     }
   };
@@ -964,6 +985,7 @@ export default function App() {
     setPlayersCompleted(0);
     setShowGameOver(false);
     setIsNewHighScore(false);
+    setPerfectRoundEarned(false);
     // Pick from a fresh pool (empty exclusion list)
     pickRandomPlayer([]);
   };
@@ -981,6 +1003,7 @@ export default function App() {
     setUsedPlayers([]);
     setPlayersCompleted(0);
     setShowGameOver(false);
+    setPerfectRoundEarned(false);
   };
 
   // When difficulty changes, pick a new player from the new pool (fresh exclusion list)
@@ -1290,11 +1313,6 @@ export default function App() {
                         {feedback.correct && feedback.pointsEarned > 0 && (
                           <div className="mono text-xs text-[#22c55e] mt-2 uppercase tracking-wider flex items-center gap-2 flex-wrap">
                             +{feedback.pointsEarned} points
-                            {feedback.streakBonus && (
-                              <span className="px-2 py-0.5 rounded flex items-center gap-1" style={{ background: "#ff6b00", color: "#000" }}>
-                                <Zap size={10} strokeWidth={3} /> Streak Bonus +20
-                              </span>
-                            )}
                             {feedback.isBonus && (
                               <span className="bg-[#ffb800] text-black px-2 py-0.5 rounded flex items-center gap-1">
                                 <Star size={10} strokeWidth={3} /> Bonus
@@ -1353,10 +1371,27 @@ export default function App() {
               </div>
             </div>
             <h2 className="display-font text-3xl md:text-5xl mb-2">{player.name}</h2>
-            <div className="mono text-sm text-white/60 mb-8">
-              You earned <span style={{ color: "#ff6b00" }} className="font-bold">{roundTotalPoints}</span> points ·
+            <div className="mono text-sm text-white/60 mb-4">
+              You earned <span style={{ color: "#ff6b00" }} className="font-bold">{roundTotalPoints + (perfectRoundEarned ? PERFECT_ROUND_BONUS : 0)}</span> points ·
               {" "}{correctCount} / {FACTS.length} correct
             </div>
+
+            {perfectRoundEarned && (
+              <div
+                className="mb-6 p-4 rounded-xl border-2 flex items-center gap-3 animate-slide-in"
+                style={{ background: "rgba(255, 107, 0, 0.1)", borderColor: "rgba(255, 107, 0, 0.4)" }}
+              >
+                <Trophy size={28} style={{ color: "#ff6b00" }} />
+                <div>
+                  <div className="bebas text-xl" style={{ color: "#ff6b00" }}>
+                    Perfect Round! +{PERFECT_ROUND_BONUS}
+                  </div>
+                  <div className="mono text-xs text-white/60 uppercase tracking-wider">
+                    All 4 questions correct
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2 mb-8">
               {roundResults.map((r, i) => (

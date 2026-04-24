@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Trophy, Flame, Check, X, ChevronRight, RotateCcw, Zap, Star, HelpCircle } from "lucide-react";
+import { Trophy, Flame, Check, X, ChevronRight, RotateCcw, Zap, Star, HelpCircle, Share2, Copy } from "lucide-react";
 
 // Current NBA players with the team they FIRST PLAYED FOR (accounts for draft-night trades)
 // `isInternational: true` means the answer is their country of origin (instead of US college).
@@ -560,7 +560,15 @@ function checkAnswer(userInput, correct, factKey) {
   const u = normalize(userInput);
   const c = normalize(correct);
   if (!u) return false;
-  if (factKey === "year" || factKey === "pick") {
+  if (factKey === "year") {
+    return u === c;
+  }
+  if (factKey === "pick") {
+    // Undrafted player: correct value is null/undefined
+    if (correct === null || correct === undefined) {
+      const undraftedAliases = ["undrafted", "udfa", "na", "none", "0", "nonedrafted", "wasntdrafted", "didntgetdrafted"];
+      return undraftedAliases.includes(u);
+    }
     return u === c;
   }
   if (factKey === "team") {
@@ -697,7 +705,7 @@ function InstructionsModal({ onStart, highScores }) {
               <li>1. <span className="font-semibold">Pick Number</span> — where they were drafted (+20)</li>
               <li>2. <span className="font-semibold">First NBA Team</span> — includes draft-night trades (+20)</li>
               <li>3. <span className="font-semibold">College or Country</span> — US players = college, international = country (+20)</li>
-              <li>4. <span className="font-semibold">Draft Year</span> — bonus round, no streak penalty (+10)</li>
+              <li>4. <span className="font-semibold">Draft Year</span> — bonus round, worth fewer points (+10)</li>
             </ul>
           </div>
 
@@ -717,8 +725,8 @@ function InstructionsModal({ onStart, highScores }) {
               Streak
             </div>
             <p className="text-sm leading-relaxed">
-              Keep correct answers in a row to build your streak. No point bonus, but
-              see how long you can go without a miss. The bonus round (year) doesn't break your streak.
+              Keep correct answers in a row to build your streak. Any wrong or
+              skipped answer breaks it, including the bonus year question. How far can you go?
             </p>
           </div>
 
@@ -776,6 +784,9 @@ function getCorrectValue(player, factKey) {
 
 // Helper to format the correct answer for display
 function formatAnswer(correct, factKey) {
+  if (factKey === "pick" && (correct === null || correct === undefined)) {
+    return "Undrafted";
+  }
   if (factKey === "origin" && typeof correct === "object" && correct !== null) {
     const all = [correct.country, ...(correct.altCountries || [])].filter(Boolean);
     if (all.length === 1) return all[0];
@@ -805,6 +816,15 @@ export default function App() {
   const [highScores, setHighScores] = useState({ easy: 0, medium: 0, hard: 0 });
   const [isNewHighScore, setIsNewHighScore] = useState(false);
   const [perfectRoundEarned, setPerfectRoundEarned] = useState(false);
+  // Cumulative stats across all 10 players (for category breakdown at end of game)
+  const [gameStats, setGameStats] = useState({
+    pick: { correct: 0, total: 0 },
+    team: { correct: 0, total: 0 },
+    origin: { correct: 0, total: 0 },
+    year: { correct: 0, total: 0 },
+    perfectRounds: 0,
+  });
+  const [shareCopied, setShareCopied] = useState(false);
 
   const player = playerIndex !== null ? PLAYERS[playerIndex] : null;
   const currentFact = FACTS[factIndex];
@@ -876,18 +896,15 @@ export default function App() {
 
     if (isCorrect) {
       pointsEarned = currentFact.points;
-      // Streak still tracked (non-bonus questions) but no per-question streak point bonus
-      if (!isBonusQuestion) {
-        newStreak = streak + 1;
-        setStreak(newStreak);
-        setBestStreak((b) => Math.max(b, newStreak));
-      }
+      // All 4 questions (including year) now advance the streak
+      newStreak = streak + 1;
+      setStreak(newStreak);
+      setBestStreak((b) => Math.max(b, newStreak));
       setScore((s) => s + pointsEarned);
     } else {
-      if (!isBonusQuestion) {
-        setStreak(0);
-        streakBroken = true;
-      }
+      // All 4 questions (including year) now break the streak
+      setStreak(0);
+      streakBroken = true;
     }
 
     setRoundResults((prev) => [
@@ -901,6 +918,15 @@ export default function App() {
         isBonus: isBonusQuestion,
       },
     ]);
+
+    // Track per-category stats for end-of-game breakdown
+    setGameStats((prev) => ({
+      ...prev,
+      [currentFact.key]: {
+        correct: prev[currentFact.key].correct + (isCorrect ? 1 : 0),
+        total: prev[currentFact.key].total + 1,
+      },
+    }));
 
     setFeedback({
       correct: isCorrect,
@@ -923,6 +949,7 @@ export default function App() {
       if (allCorrect) {
         setScore((s) => s + PERFECT_ROUND_BONUS);
         setPerfectRoundEarned(true);
+        setGameStats((prev) => ({ ...prev, perfectRounds: prev.perfectRounds + 1 }));
       } else {
         setPerfectRoundEarned(false);
       }
@@ -952,9 +979,8 @@ export default function App() {
   const handleSkip = () => {
     if (attempted) return;
     setAttempted(true);
-    if (!isBonusQuestion) {
-      setStreak(0);
-    }
+    // All questions (including year) now break the streak if skipped
+    setStreak(0);
     const correctValue = getCorrectValue(player, currentFact.key);
     setRoundResults((prev) => [
       ...prev,
@@ -967,12 +993,20 @@ export default function App() {
         isBonus: isBonusQuestion,
       },
     ]);
+    // Track per-category stats — skipped counts as incorrect
+    setGameStats((prev) => ({
+      ...prev,
+      [currentFact.key]: {
+        correct: prev[currentFact.key].correct,
+        total: prev[currentFact.key].total + 1,
+      },
+    }));
     setFeedback({
       correct: false,
       answer: correctValue,
       pointsEarned: 0,
       skipped: true,
-      streakBroken: !isBonusQuestion,
+      streakBroken: true,
       isBonus: isBonusQuestion,
     });
   };
@@ -986,6 +1020,14 @@ export default function App() {
     setShowGameOver(false);
     setIsNewHighScore(false);
     setPerfectRoundEarned(false);
+    setGameStats({
+      pick: { correct: 0, total: 0 },
+      team: { correct: 0, total: 0 },
+      origin: { correct: 0, total: 0 },
+      year: { correct: 0, total: 0 },
+      perfectRounds: 0,
+    });
+    setShareCopied(false);
     // Pick from a fresh pool (empty exclusion list)
     pickRandomPlayer([]);
   };
@@ -1004,6 +1046,14 @@ export default function App() {
     setPlayersCompleted(0);
     setShowGameOver(false);
     setPerfectRoundEarned(false);
+    setGameStats({
+      pick: { correct: 0, total: 0 },
+      team: { correct: 0, total: 0 },
+      origin: { correct: 0, total: 0 },
+      year: { correct: 0, total: 0 },
+      perfectRounds: 0,
+    });
+    setShareCopied(false);
   };
 
   // When difficulty changes, pick a new player from the new pool (fresh exclusion list)
@@ -1014,6 +1064,38 @@ export default function App() {
     // eslint-disable-next-line
   }, [difficulty]);
 
+  // Generate and copy the shareable score text
+  const handleShareScore = async () => {
+    const factLabels = { pick: "Pick", team: "Team", origin: "College/Country", year: "Year" };
+    const statsLines = ["pick", "team", "origin", "year"]
+      .map((k) => `${factLabels[k]}: ${gameStats[k].correct}/${gameStats[k].total}`)
+      .join(" · ");
+    const shareText = `🏀 HoopDraft: ${score}/1000 (${difficulty[0].toUpperCase() + difficulty.slice(1)})
+🎯 ${gameStats.perfectRounds} perfect rounds · 🔥 Best streak: ${bestStreak}
+${statsLines}
+Play at hoopdraft.org`;
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch (e) {
+      // Fallback for older browsers
+      const textarea = document.createElement("textarea");
+      textarea.value = shareText;
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand("copy");
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 2000);
+      } catch (err) {
+        // give up silently
+      }
+      document.body.removeChild(textarea);
+    }
+  };
+
   const roundTotalPoints = useMemo(
     () => roundResults.reduce((sum, r) => sum + r.pointsEarned, 0),
     [roundResults]
@@ -1023,7 +1105,7 @@ export default function App() {
 
   const getPlaceholder = () => {
     if (currentFact.key === "year") return "e.g. 2019";
-    if (currentFact.key === "pick") return "e.g. 1, 14, 30";
+    if (currentFact.key === "pick") return "e.g. 1, 14, or 'undrafted'";
     if (currentFact.key === "team") return "e.g. Lakers or Los Angeles Lakers";
     if (currentFact.key === "origin") {
       return player?.isInternational
@@ -1223,7 +1305,7 @@ export default function App() {
                   <div className="mb-4 flex items-center gap-2 bg-[#ffb800]/10 border border-[#ffb800]/30 rounded-lg px-4 py-2">
                     <Star size={14} className="text-[#ffb800] fill-[#ffb800]" />
                     <span className="mono text-xs text-[#ffb800] uppercase tracking-wider">
-                      Bonus round · Wrong answer won't break your streak
+                      Bonus round · Worth fewer points (+10)
                     </span>
                   </div>
                 )}
@@ -1247,7 +1329,7 @@ export default function App() {
                 {!feedback && (
                   <div className="flex gap-2 flex-col sm:flex-row">
                     <input
-                      type={currentFact.key === "year" || currentFact.key === "pick" ? "number" : "text"}
+                      type={currentFact.key === "year" ? "number" : "text"}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
@@ -1278,8 +1360,6 @@ export default function App() {
                     className={`animate-slide-in rounded-xl p-5 border-2 ${
                       feedback.correct
                         ? "bg-[#22c55e]/10 border-[#22c55e]/40"
-                        : feedback.isBonus
-                        ? "bg-[#ffb800]/10 border-[#ffb800]/30"
                         : "bg-[#ef4444]/10 border-[#ef4444]/40"
                     }`}
                   >
@@ -1288,8 +1368,6 @@ export default function App() {
                         className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${
                           feedback.correct
                             ? "bg-[#22c55e]"
-                            : feedback.isBonus
-                            ? "bg-[#ffb800]"
                             : "bg-[#ef4444]"
                         }`}
                       >
@@ -1318,11 +1396,6 @@ export default function App() {
                                 <Star size={10} strokeWidth={3} /> Bonus
                               </span>
                             )}
-                          </div>
-                        )}
-                        {!feedback.correct && feedback.isBonus && (
-                          <div className="mono text-xs text-[#ffb800] mt-2 uppercase tracking-wider">
-                            Streak preserved — bonus round
                           </div>
                         )}
                       </div>
@@ -1452,29 +1525,70 @@ export default function App() {
 
       {/* Game Over Modal */}
       {showGameOver && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.85)" }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto" style={{ background: "rgba(0,0,0,0.85)" }}>
           <div
-            className="animate-slide-in max-w-lg w-full border border-white/10 rounded-2xl p-8 text-center"
+            className="animate-slide-in max-w-lg w-full border border-white/10 rounded-2xl p-6 md:p-8 my-auto"
             style={{ background: "linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%)" }}
           >
-            <Trophy size={48} className="mx-auto mb-4" style={{ color: "#ff6b00" }} />
-            <div className="mono text-xs text-white/60 uppercase tracking-widest mb-2">
-              Game Over
-            </div>
-            <h2 className="display-font text-3xl md:text-5xl mb-3">
-              {score} POINTS
-            </h2>
-            {isNewHighScore && (
-              <div className="mb-4 inline-block px-4 py-2 rounded-full mono text-xs uppercase tracking-wider" style={{ background: "#ff6b00", color: "#000" }}>
-                🎉 New High Score!
+            <div className="text-center">
+              <Trophy size={40} className="mx-auto mb-3" style={{ color: "#ff6b00" }} />
+              <div className="mono text-xs text-white/60 uppercase tracking-widest mb-2">
+                Game Over
               </div>
-            )}
-            <div className="mono text-sm text-white/60 mb-6">
-              {difficulty.toUpperCase()} · Best Streak: {bestStreak}
+              <h2 className="display-font text-4xl md:text-5xl mb-2">
+                {score} / 1000
+              </h2>
+              {isNewHighScore && (
+                <div className="mb-3 inline-block px-4 py-1.5 rounded-full mono text-xs uppercase tracking-wider" style={{ background: "#ff6b00", color: "#000" }}>
+                  🎉 New High Score!
+                </div>
+              )}
+              <div className="mono text-sm text-white/60 mb-6">
+                {difficulty.toUpperCase()} · {gameStats.perfectRounds} perfect rounds · Best streak: {bestStreak}
+              </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 mb-6">
+
+            {/* Category breakdown */}
+            <div className="mb-6">
+              <div className="mono text-xs text-white/50 uppercase tracking-wider mb-2">
+                Category Breakdown
+              </div>
+              <div className="space-y-2">
+                {[
+                  { key: "pick", label: "Pick Number" },
+                  { key: "team", label: "First NBA Team" },
+                  { key: "origin", label: "College / Country" },
+                  { key: "year", label: "Draft Year" },
+                ].map(({ key, label }) => {
+                  const stat = gameStats[key];
+                  const pct = stat.total > 0 ? (stat.correct / stat.total) * 100 : 0;
+                  let barColor = "#ef4444";
+                  if (pct >= 80) barColor = "#22c55e";
+                  else if (pct >= 50) barColor = "#ffb800";
+                  return (
+                    <div key={key} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                      <div className="flex justify-between items-center mb-1.5">
+                        <div className="text-sm font-medium">{label}</div>
+                        <div className="mono text-sm text-white/80">
+                          {stat.correct} / {stat.total}
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{ width: `${pct}%`, background: barColor }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* High scores strip */}
+            <div className="grid grid-cols-3 gap-2 mb-5">
               {["easy", "medium", "hard"].map((d) => (
-                <div key={d} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                <div key={d} className="bg-white/5 border border-white/10 rounded-lg p-3 text-center">
                   <div className="mono text-[10px] text-white/50 uppercase">{d} best</div>
                   <div className="bebas text-xl" style={{ color: d === difficulty ? "#ff6b00" : "#fff" }}>
                     {highScores[d] || 0}
@@ -1482,13 +1596,28 @@ export default function App() {
                 </div>
               ))}
             </div>
-            <button
-              onClick={startNewGame}
-              className="bebas text-xl w-full py-4 rounded-lg transition flex items-center justify-center gap-2 hover:opacity-90"
-              style={{ background: "#ff6b00", color: "#000" }}
-            >
-              Play Again <ChevronRight size={22} strokeWidth={3} />
-            </button>
+
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={handleShareScore}
+                className="bebas text-lg flex-1 py-3 rounded-lg transition flex items-center justify-center gap-2 border border-white/20 hover:bg-white/5"
+                style={{ color: "#fff" }}
+              >
+                {shareCopied ? (
+                  <><Check size={18} strokeWidth={3} /> Copied!</>
+                ) : (
+                  <><Share2 size={18} strokeWidth={2.5} /> Share Score</>
+                )}
+              </button>
+              <button
+                onClick={startNewGame}
+                className="bebas text-lg flex-1 py-3 rounded-lg transition flex items-center justify-center gap-2 hover:opacity-90"
+                style={{ background: "#ff6b00", color: "#000" }}
+              >
+                Play Again <ChevronRight size={20} strokeWidth={3} />
+              </button>
+            </div>
           </div>
         </div>
       )}
